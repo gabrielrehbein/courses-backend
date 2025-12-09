@@ -41,6 +41,9 @@ class Enrollment(models.Model):
     )
     enrolled_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return f"User: {self.user.name}\nCourse: (id: {self.course.id}) (name: {self.course.title})\nInscrito em: {self.enrolled_at}"
+
     class Meta:
         unique_together = ('user', 'course')
 
