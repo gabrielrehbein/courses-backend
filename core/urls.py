@@ -7,4 +7,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
 
     path(f"{PREFIX_API_URL}", include("accounts.urls")),
+    path(f"{PREFIX_API_URL}", include("courses.urls")),
+    path(f"{PREFIX_API_URL}", include("courses.urls")),
 ]
