@@ -1,0 +1,1 @@
+AUTH_LOGIN_ERROR_MESSAGE = "Email e/ou senha inválido(s)"
