@@ -74,12 +74,12 @@ class Lesson(models.Model):
 class WatchedLesson(models.Model):
     user = models.ForeignKey(
         User,
-        related_name='watched_lessons',
+        related_name='watched_by',
         on_delete=models.CASCADE
     )
     lesson = models.ForeignKey(
         Lesson,
-        related_name='watched_by',
+        related_name='watched_lessons',
         on_delete=models.CASCADE
     )
     watched_at = models.DateTimeField(auto_now_add=True)

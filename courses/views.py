@@ -2,7 +2,7 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework import decorators
 from .filters import CourseFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Course, Enrollment
+from .models import Course, Enrollment, Lesson, Module, WatchedLesson
 from . import serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -11,7 +11,7 @@ from accounts.models import User
 from rest_framework import status
 from rest_framework.exceptions import APIException
 from core.utils.exceptions import ValidationError
-from django.db.models import Avg, Count
+from django.db.models import Avg, Count, Sum
 
 
 class CourseViewSet(ReadOnlyModelViewSet):
@@ -90,3 +90,57 @@ class CourseViewSet(ReadOnlyModelViewSet):
                 "enrolled_at": enrolled_at
             }
         )
+
+    @decorators.action(methods=["get"], detail=True, permission_classes=[IsAuthenticated])
+    def content(self, request, pk):
+        modules_by_course_detail = Module.objects.filter(
+            course=pk
+        )
+
+        total_modules = 0
+        total_time = 0
+        total_lessons = 0
+        progress = 0
+
+        modules_serializer = serializers.ModuleSerializer([], many=True)
+
+        if modules_by_course_detail:
+            total_modules = modules_by_course_detail.count()
+
+            lesson_aggregate = Lesson.objects.filter(
+                module__course=pk
+            ).aggregate(
+                total_time=Sum("time_estimate"),
+                total_lessons=Count("id")
+            )
+
+            total_time = lesson_aggregate["total_time"] or 0
+            total_lessons = lesson_aggregate["total_lessons"] or 0
+
+            if request.user.is_authenticated:
+                total_watched = WatchedLesson.objects.filter(
+                    user=request.user,
+                    lesson__module__course=pk
+                ).aggregate(
+                    total_watched=Count("id")
+                )["total_watched"] or 0
+
+                if total_lessons > 0:
+                    progress = round((total_watched / total_lessons) * 100, 2)
+
+            modules = Module.objects.filter(
+                course=pk
+            )
+            modules_serializer = serializers.ModuleSerializer(
+                modules, many=True
+            )
+
+        data = {
+            "total_modules": total_modules,
+            "total_time": total_time,
+            "total_lessons": total_lessons,
+            "progress": progress,
+            "modules": modules_serializer.data
+        }
+
+        return Response(data, status=status.HTTP_200_OK)
