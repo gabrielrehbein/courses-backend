@@ -1,3 +1,7 @@
+from datetime import datetime
+from django.db.models import Avg, Count, Sum
+from core.utils.exceptions import ValidationError
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework import decorators
 from .filters import CourseFilter
@@ -9,9 +13,9 @@ from rest_framework.response import Response
 from rest_framework.request import Request
 from accounts.models import User
 from rest_framework import status, views
-from rest_framework.exceptions import APIException, NotFound
-from core.utils.exceptions import ValidationError
-from django.db.models import Avg, Count, Sum
+from django.shortcuts import get_object_or_404
+from .exceptions.completed_course_required import CompletedCourseRequired
+from .exceptions.enrollment_required import EnrollmentRequired
 
 
 class CourseViewSet(ReadOnlyModelViewSet):
@@ -91,6 +95,45 @@ class CourseViewSet(ReadOnlyModelViewSet):
             }
         )
 
+    @decorators.action(methods=["post"], detail=True, permission_classes=[IsAuthenticated])
+    def generate_certificate(self, request, pk):
+        MESSAGE_ERROR = "Você deve ter o curso e/ou completa-lo para obter o certificado"
+        MAX_PROGRESS = 100
+
+        user = request.user
+
+        course = get_object_or_404(Course, pk=pk)
+
+        if not Enrollment.objects.filter(course=course, user=user).exists():
+            raise ValidationError(MESSAGE_ERROR)
+
+        total_lessons = Lesson.objects.filter(
+            module__course=course
+        ).count()
+
+        total_watched_lessons = WatchedLesson.objects.filter(
+            lesson__module__course=course,
+            user=user
+        ).count()
+
+        progress = round((total_watched_lessons / total_lessons) * 100, 2)
+
+        if (progress < MAX_PROGRESS):
+            raise ValidationError(MESSAGE_ERROR)
+
+        course_data = serializers.CourseSerializer(course).data
+
+        certificate_data = {
+            "progress": progress,
+            "issued_at": datetime.now()
+        }
+
+        return Response(
+            {
+                "course": course_data,
+                "certificate": certificate_data
+            }, status=status.HTTP_201_CREATED)
+
     @decorators.action(methods=["get"], detail=True, permission_classes=[IsAuthenticated])
     def content(self, request, pk):
         modules_by_course_detail = Module.objects.filter(
@@ -161,5 +204,5 @@ class LessonMarkAsWatchedView(views.APIView):
         )
 
         if (created):
-            return Response({"detail": "Tarefa marcada como assistida"}, status=status.HTTP_201_CREATED)
+            return Response({"detail": "Tarefa marcada como assistida"}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"detail": "Tarefa já está marcada como assistida"}, status=status.HTTP_201_CREATED)
