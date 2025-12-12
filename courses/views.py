@@ -8,8 +8,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.request import Request
 from accounts.models import User
-from rest_framework import status
-from rest_framework.exceptions import APIException
+from rest_framework import status, views
+from rest_framework.exceptions import APIException, NotFound
 from core.utils.exceptions import ValidationError
 from django.db.models import Avg, Count, Sum
 
@@ -144,3 +144,22 @@ class CourseViewSet(ReadOnlyModelViewSet):
         }
 
         return Response(data, status=status.HTTP_200_OK)
+
+
+class LessonMarkAsWatchedView(views.APIView):
+    def post(self, request, pk=None):
+        lesson = Lesson.objects.filter(
+            id=pk
+        ).first()
+
+        if (not lesson):
+            return NotFound("Aula não encontrada.")
+
+        watched, created = WatchedLesson.objects.get_or_create(
+            user=request.user,
+            lesson=lesson
+        )
+
+        if (created):
+            return Response({"detail": "Tarefa marcada como assistida"}, status=status.HTTP_201_CREATED)
+        return Response({"detail": "Tarefa já está marcada como assistida"}, status=status.HTTP_201_CREATED)
