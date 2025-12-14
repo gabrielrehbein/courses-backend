@@ -6,7 +6,7 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework import decorators
 from .filters import CourseFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Course, Enrollment, Lesson, Module, WatchedLesson
+from .models import Course, Enrollment, Lesson, Module, Order, WatchedLesson
 from . import serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -14,6 +14,8 @@ from rest_framework.request import Request
 from accounts.models import User
 from rest_framework import status, views
 from django.shortcuts import get_object_or_404
+from django.conf import settings
+import stripe
 
 
 class CourseViewSet(ReadOnlyModelViewSet):
@@ -94,13 +96,18 @@ class CourseViewSet(ReadOnlyModelViewSet):
             }
         )
 
-    def __get_course_and_user_validate_enrolment(self, request, course_pk, message_error):
+    def __get_course_and_user_validate_enrolment(self, request, course_pk, required_enrollment):
         user = request.user
 
         course = get_object_or_404(Course, pk=course_pk)
 
-        if not Enrollment.objects.filter(course=course, user=user).exists():
-            raise ValidationError(message_error)
+        is_enrolled = Enrollment.objects.filter(
+            course=course, user=user).exists()
+        if required_enrollment and not is_enrolled:
+            raise ValidationError(
+                "Você pricesa estar matriculado neste curso.")
+        if not required_enrollment and is_enrolled:
+            raise ValidationError("Você já está matriculado neste curso.")
 
         return user, course
 
@@ -129,7 +136,6 @@ class CourseViewSet(ReadOnlyModelViewSet):
         user, course = self.__get_course_and_user_validate_enrolment(
             request,
             pk,
-            MESSAGE_ERROR
         )
 
         progress = self.__get_course_progress(
@@ -204,6 +210,61 @@ class CourseViewSet(ReadOnlyModelViewSet):
         }
 
         return Response(data, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def enroll(self, request: Request, pk=None):
+        course, user = self.__get_course_and_user_validate_enrolment(
+            request,
+            required_enrollment=False
+        )
+
+        if Order.objects.filter(user=user, course=course, paid=True):
+            raise ValidationError(
+                "Você já tem um pedido para este curso pago.")
+
+        user.orders.filter(course=course, paid=False).delete()
+
+        order = Order.objects.create(
+            user=user,
+            course=course
+        )
+
+        try:
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                mode="payment",
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": "brl",
+                            "product_data": {
+                                "name": course.title,
+                                "description": course.description,
+                            },
+                            "unit_amount": int(course.price * 100),
+                        },
+                        "quantity": 1,
+
+                    },
+                ],
+                customer_email=user.email,
+                metadata={
+                    "user_id": user.id,
+                    "order_id": order.id,
+                    "course_id": course.id
+                },
+                success_url=f"{settings.BASE_URL}/api/v1/courses/process_checkout?order_id={order.id}",
+                cancel_url=f"{settings.FRONTEND_BASE_URL}/courses/{course.id}?message=cancel_order",
+            )
+
+            order.external_payment_id = checkout_session.id
+            order.save()
+
+            return Response({"checkout_url": checkout_session.url}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({
+                "detail": "Erro ao tentar se inscrever no curso"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LessonMarkAsWatchedView(views.APIView):
