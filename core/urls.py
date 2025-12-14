@@ -9,4 +9,5 @@ urlpatterns = [
     path(f"{PREFIX_API_URL}", include("accounts.urls")),
     path(f"{PREFIX_API_URL}", include("courses.urls")),
     path(f"{PREFIX_API_URL}", include("courses.urls")),
+    path(f"{PREFIX_API_URL}", include("dashboard.urls")),
 ]

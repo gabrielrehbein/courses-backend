@@ -1,7 +1,7 @@
 from datetime import datetime
 from django.db.models import Avg, Count, Sum
 from core.utils.exceptions import ValidationError
-from rest_framework.exceptions import APIException, NotFound
+from rest_framework.exceptions import NotFound
 from rest_framework.viewsets import ReadOnlyModelViewSet
 from rest_framework import decorators
 from .filters import CourseFilter
@@ -11,7 +11,6 @@ from . import serializers
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.request import Request
-from accounts.models import User
 from rest_framework import status, views
 from django.shortcuts import get_object_or_404, redirect
 from django.conf import settings
@@ -269,24 +268,42 @@ class CourseViewSet(ReadOnlyModelViewSet):
 
 
 class LessonMarkAsWatchedView(views.APIView):
-    def post(self, request, pk=None):
-        lesson = Lesson.objects.filter(
-            id=pk
-        ).first()
 
-        if (not lesson):
-            return NotFound("Aula não encontrada.")
+    def post(self, request, pk=None):
+        lesson = Lesson.objects.filter(id=pk).first()
+
+        if not lesson:
+            return Response(
+                {"detail": "Aula não encontrada"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        is_enrolled = Enrollment.objects.filter(
+            user=request.user,
+            course=lesson.module.course
+        ).exists()
+
+        if not is_enrolled:
+            return Response(
+                {"detail": "Você não está matriculado neste curso"},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         watched, created = WatchedLesson.objects.get_or_create(
             user=request.user,
             lesson=lesson
         )
 
-        if (created):
-            return Response({"detail": "Tarefa marcada como assistida"}, status=status.HTTP_400_BAD_REQUEST)
-        elif (watched):
-            return Response({"detail": "Tarefa já está marcada como assistida"}, status=status.HTTP_201_CREATED)
-        return Response({"detail": "algo deu errado"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if created:
+            return Response(
+                {"detail": "Aula marcada como assistida"},
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            {"detail": "Aula já estava marcada como assistida"},
+            status=status.HTTP_200_OK
+        )
 
 
 class ProcessCheckout(views.APIView):
