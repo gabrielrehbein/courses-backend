@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.request import Request
 from accounts.models import User
 from rest_framework import status, views
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.conf import settings
 import stripe
 
@@ -213,12 +213,13 @@ class CourseViewSet(ReadOnlyModelViewSet):
 
     @decorators.action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def enroll(self, request: Request, pk=None):
-        course, user = self.__get_course_and_user_validate_enrolment(
+        user, course = self.__get_course_and_user_validate_enrolment(
             request,
+            course_pk=pk,
             required_enrollment=False
         )
 
-        if Order.objects.filter(user=user, course=course, paid=True):
+        if Order.objects.filter(user=user, course=course, paid=True).exists():
             raise ValidationError(
                 "Você já tem um pedido para este curso pago.")
 
@@ -286,3 +287,35 @@ class LessonMarkAsWatchedView(views.APIView):
         elif (watched):
             return Response({"detail": "Tarefa já está marcada como assistida"}, status=status.HTTP_201_CREATED)
         return Response({"detail": "algo deu errado"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ProcessCheckout(views.APIView):
+    def get(self, request: Request):
+        order_id = request.data.get("order_id")
+
+        if not order_id:
+            return redirect(settings.FRONTEND_BASE_URL)
+
+        order = get_object_or_404(Order, pk=order_id)
+
+        error_url = f"{settings.FRONTEND_BASE_URL}/courses/{order.course.id}/?message=payment_failed"
+        success_url = f"{settings.FRONTEND_BASE_URL}/courses/{order.course.id}/learn/"
+
+        try:
+            session = stripe.checkout.Session.retrieve(
+                order.external_payment_id)
+
+            if session.payment_status != "paid":
+                return redirect(error_url)
+
+            order.paid = True
+            order.save()
+
+            Enrollment.objects.get_or_create(
+                user=order.user,
+                course=order.course
+            )
+
+            return redirect(success_url)
+        except Exception as e:
+            return redirect(error_url)
