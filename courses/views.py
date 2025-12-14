@@ -14,8 +14,6 @@ from rest_framework.request import Request
 from accounts.models import User
 from rest_framework import status, views
 from django.shortcuts import get_object_or_404
-from .exceptions.completed_course_required import CompletedCourseRequired
-from .exceptions.enrollment_required import EnrollmentRequired
 
 
 class CourseViewSet(ReadOnlyModelViewSet):
@@ -36,11 +34,12 @@ class CourseViewSet(ReadOnlyModelViewSet):
 
     @decorators.action(methods=["post"], detail=True, permission_classes=[IsAuthenticated])
     def create_reviews(self, request: Request, pk=None):
-        user = request.user
-        course = self.get_object()
-
-        if (not Enrollment.objects.filter(user=user, course=course).exists()):
-            raise ValidationError("Você precisa ter o curso para avaliá-lo.")
+        MESSAGE_ERROR = "Você precisa ter o curso para avaliá-lo."
+        user, course = self.__get_course_and_user_validate_enrolment(
+            request,
+            pk,
+            MESSAGE_ERROR
+        )
 
         exists = user.reviews.filter(
             course=course
@@ -95,28 +94,46 @@ class CourseViewSet(ReadOnlyModelViewSet):
             }
         )
 
-    @decorators.action(methods=["post"], detail=True, permission_classes=[IsAuthenticated])
-    def generate_certificate(self, request, pk):
-        MESSAGE_ERROR = "Você deve ter o curso e/ou completa-lo para obter o certificado"
-        MAX_PROGRESS = 100
-
+    def __get_course_and_user_validate_enrolment(self, request, course_pk, message_error):
         user = request.user
 
-        course = get_object_or_404(Course, pk=pk)
+        course = get_object_or_404(Course, pk=course_pk)
 
         if not Enrollment.objects.filter(course=course, user=user).exists():
-            raise ValidationError(MESSAGE_ERROR)
+            raise ValidationError(message_error)
 
+        return user, course
+
+    def __get_course_progress(self, course_pk, user_pk):
         total_lessons = Lesson.objects.filter(
-            module__course=course
+            module__course=course_pk
         ).count()
 
         total_watched_lessons = WatchedLesson.objects.filter(
-            lesson__module__course=course,
-            user=user
+            lesson__module__course=course_pk,
+            user=user_pk
         ).count()
 
-        progress = round((total_watched_lessons / total_lessons) * 100, 2)
+        if total_lessons <= 0:
+            return 100
+        if total_watched_lessons <= 0:
+            return 0
+        return round((total_watched_lessons / total_lessons) * 100, 2)
+
+    @decorators.action(methods=["post"], detail=True, permission_classes=[IsAuthenticated])
+    def generate_certificate(self, request, pk):
+
+        MAX_PROGRESS = 100
+
+        MESSAGE_ERROR = "Você deve ter o curso e/ou completa-lo para obter o certificado"
+        user, course = self.__get_course_and_user_validate_enrolment(
+            request,
+            pk,
+            MESSAGE_ERROR
+        )
+
+        progress = self.__get_course_progress(
+            course_pk=course.id, user_pk=user.id)
 
         if (progress < MAX_PROGRESS):
             raise ValidationError(MESSAGE_ERROR)
@@ -205,4 +222,6 @@ class LessonMarkAsWatchedView(views.APIView):
 
         if (created):
             return Response({"detail": "Tarefa marcada como assistida"}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"detail": "Tarefa já está marcada como assistida"}, status=status.HTTP_201_CREATED)
+        elif (watched):
+            return Response({"detail": "Tarefa já está marcada como assistida"}, status=status.HTTP_201_CREATED)
+        return Response({"detail": "algo deu errado"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
